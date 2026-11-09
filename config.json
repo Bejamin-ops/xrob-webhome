@@ -1,0 +1,14 @@
+{
+  "sites": [
+    {
+      "key": "xrob_home",
+      "name": "🧩┆Xrob┆首页",
+      "type": 3,
+      "api": "csp_Builtin",
+      "homePage": "https://bejamin-ops.github.io/xrob-webhome/",
+      "searchable": 0,
+      "quickSearch": 0,
+      "filterable": 0
+    }
+  ]
+}

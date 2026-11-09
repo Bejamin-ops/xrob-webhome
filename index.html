@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Xrob</title>
+<style>
+  :root{
+    --bg:#f4f6fa; --card:#fff; --txt:#101828; --sub:#8a93a0; --brand:#2f6bff;
+    --safe-top:var(--fm-safe-top,20px); --safe-bottom:var(--fm-safe-bottom,20px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font-family:-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+       padding-top:var(--safe-top);padding-bottom:calc(var(--safe-bottom) + 12px)}
+  header{padding:10px 16px 4px;display:flex;align-items:baseline;gap:8px}
+  h1{font-size:22px;margin:0}
+  .ver{font-size:12px;color:var(--sub)}
+  .chips{display:flex;gap:10px;overflow-x:auto;padding:10px 16px 6px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;padding:9px 16px;border-radius:12px;background:#fff;color:#3c4656;
+        font-size:14px;border:none}
+  .chip.on{background:var(--brand);color:#fff}
+  .sub{padding:6px 16px;color:var(--sub);font-size:12px}
+  .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;padding:8px 16px}
+  .card{background:var(--card);border-radius:14px;overflow:hidden}
+  .cover{width:100%;aspect-ratio:3/4;background:#e7ecf3;object-fit:cover;display:block}
+  .t{font-size:12px;line-height:1.35;padding:8px 8px 10px;color:#1f2733;
+     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .modal{position:fixed;inset:0;background:rgba(10,14,20,.55);display:none;align-items:flex-end}
+  .modal.on{display:flex}
+  .sheet{background:#fff;width:100%;max-height:84vh;border-radius:18px 18px 0 0;
+         padding:16px 16px calc(16px + var(--safe-bottom));overflow:auto}
+  .sheet h2{font-size:16px;margin:0 0 10px}
+  .eps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .ep{padding:10px 0;text-align:center;border-radius:10px;background:#f0f3f8;font-size:13px}
+  .close{margin-top:14px;width:100%;padding:12px;border-radius:12px;border:none;background:#eef2f8;font-size:15px}
+  .empty{padding:40px 16px;text-align:center;color:var(--sub);font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>Xrob</h1><span class="ver">WebHome · 1.0</span></header>
+<div class="chips" id="chips"></div>
+<div class="sub" id="status">加载中…</div>
+<div class="grid" id="grid"></div>
+<div class="modal" id="modal"><div class="sheet">
+  <h2 id="mtitle">详情</h2>
+  <div class="eps" id="eps"></div>
+  <button class="close" onclick="closeSheet()">关闭</button>
+</div></div>
+
+<script>
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const $ = id => document.getElementById(id);
+const strip = s => String(s||"").replace(/<[^>]*>/g," ").replace(/\s+/g," ").trim();
+
+async function get(url, headers, opts={}) {
+  const r = await fm.req(url, Object.assign({ headers: Object.assign({"User-Agent":UA}, headers||{}), timeout: 25 }, opts));
+  if (!r || !r.ok) throw new Error((r && r.error) || ("HTTP " + (r && r.status)));
+  return r.body;
+}
+
+/* ---------- 源定义 ---------- */
+const SOURCES = [
+  { key:"hg", name:"短剧 · 黄果",
+    async list(page){
+      const t = await get(`https://huangguoai.com/api/videos?page=${page}&page_size=24&sort=hot`, {Referer:"https://huangguoai.com/"}, {responseType:"json"});
+      const items = (t && t.data && t.data.items) || [];
+      return items.map(it => ({ id:String(it.id), title:it.title||it.name||"", pic:it.cover||"",
+        desc: it.episode_count ? ("全"+it.episode_count+"集") : "" }));
+    },
+    async detail(id){
+      const t = await get(`https://huangguoai.com/api/videos/${id}`, {Referer:"https://huangguoai.com/"}, {responseType:"json"});
+      const v = (t && t.data) || {};
+      const eps = (v.episodes||[]).map((e,i)=>({ n: e.ep_num||e.episode||(i+1) }));
+      return { title: v.title||v.name||id, eps: eps.length?eps:[{n:1}],
+        play: async n => {
+          const p = await get(`https://huangguoai.com/api/videos/${id}/play?ep=${n}`, {Referer:"https://huangguoai.com/"}, {responseType:"json"});
+          return (p && p.data && (p.data.video_url||p.data.play_url||p.data.url)) || "";
+        },
+        headers: { Referer:"https://huangguoai.com/" } };
+    } },
+
+  { key:"j91", name:"短视频 · 91",
+    async list(page){
+      const html = await get(`https://91porna.com/comic/index/video?category=melonshort${page>1?("&page="+page):""}`, {Referer:"https://91porna.com/"});
+      const out=[], seen={};
+      const re=/video_key=(\d+)[\s\S]{0,1600}?data-src="([^"]+)"[\s\S]{0,900}?alt="([^"]*)"/g; let m;
+      while((m=re.exec(html)) && out.length<40){ if(seen[m[1]])continue; seen[m[1]]=1;
+        out.push({id:m[1], title:m[3]||("视频 "+m[1]), pic:m[2]||"", desc:""}); }
+      return out;
+    },
+    async detail(id){
+      const p = await get(`https://91porna.com/api/videos/${id}/playback`, {Referer:"https://91porna.com/","Content-Type":"application/json"}, {method:"POST", body:"{}", responseType:"json"});
+      const s = (p && p.data && p.data.streams) || {};
+      const url = s.main || s.hevc || "";
+      return { title:"91短视频 "+id, eps:[{n:1}], play: async()=>url, headers:{Referer:"https://91porna.com/"} };
+    } },
+
+  { key:"mrds", name:"大赛 · 每日",
+    async list(page){
+      const path = page>1 ? `/page/${page}/` : "/";
+      const html = await get("https://abandon.tfqwtrch.cc"+path, {Referer:"https://abandon.tfqwtrch.cc/"});
+      const out=[], seen={};
+      const parts = html.split(/<article[\s>]/i);
+      for (let i=1;i<parts.length;i++){
+        const b=parts[i]; const im=b.match(/\/archives\/(\d+)\//); if(!im) continue;
+        const id=im[1]; if(seen[id])continue;
+        const tm=b.match(/post-card-title[^>]*>([\s\S]*?)<\/h2>/i); if(!tm) continue;
+        const cm=b.match(/loadBannerDirect\(\s*'([^']+)'/i);
+        seen[id]=1; out.push({id, title:strip(tm[1]), pic:cm?cm[1]:"", desc:""});
+      }
+      return out;
+    },
+    async detail(id){
+      const html = await get("https://abandon.tfqwtrch.cc/archives/"+id+"/", {Referer:"https://abandon.tfqwtrch.cc/"});
+      const urls=[], seen={}; let m;
+      const re=/"video"\s*:\s*\{\s*"url"\s*:\s*"([^"]+)"/g;
+      while((m=re.exec(html))){ let u=m[1].replace(/\\\//g,"/");
+        if(u.startsWith("https://")) u="http://"+u.slice(8);
+        if(!seen[u]){seen[u]=1;urls.push(u);} }
+      const tm = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+      return { title: tm?strip(tm[1]):("每日大赛 "+id),
+        eps: urls.map((u,i)=>({n:i+1,url:u})),
+        play: async n => urls[n-1] || "",
+        headers:{Referer:"https://abandon.tfqwtrch.cc/"} };
+    } }
+];
+
+let cur = 0, page = 1, loading = false, done = false;
+
+function renderChips(){
+  $("chips").innerHTML = SOURCES.map((s,i)=>
+    `<button class="chip ${i===cur?"on":""}" onclick="pick(${i})">${s.name}</button>`).join("");
+}
+
+async function pick(i){
+  cur = i; page = 1; done = false; renderChips();
+  $("grid").innerHTML = ""; $("status").textContent = "加载中…";
+  await nextPage();
+}
+
+async function nextPage(){
+  if (loading || done) return;
+  loading = true;
+  try{
+    const items = await SOURCES[cur].list(page);
+    if (!items.length){ done = true; $("status").textContent = "没有更多了"; }
+    else{
+      $("grid").insertAdjacentHTML("beforeend", items.map((it,idx)=>`
+        <div class="card" onclick="openDetail('${it.id}')">
+          <img class="cover" loading="lazy" src="${it.pic ? fm.res(it.pic, {headers:{Referer:SOURCES[cur].key==="mrds"?"https://abandon.tfqwtrch.cc/":"https://91porna.com/"}}) : ""}">
+          <div class="t">${escapeHtml(it.title)}</div>
+        </div>`).join(""));
+      page++; $("status").textContent = `已加载 ${$("grid").children.length} 条`;
+    }
+  }catch(e){ $("status").textContent = "加载失败：" + e.message; }
+  loading = false;
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function openDetail(id){
+  $("mtitle").textContent = "解析中…"; $("eps").innerHTML = ""; $("modal").classList.add("on");
+  try{
+    const d = await SOURCES[cur].detail(id);
+    $("mtitle").textContent = d.title;
+    $("eps").innerHTML = d.eps.map((e,i)=>
+      `<div class="ep" onclick="playEp('${id}', ${i})">第${e.n}集</div>`).join("");
+    window.__detail = d;
+  }catch(e){ $("mtitle").textContent = "解析失败：" + e.message; }
+}
+
+async function playEp(id, idx){
+  try{
+    const d = window.__detail;
+    const ep = d.eps[idx];
+    let url = ep.url || await d.play(ep.n);
+    if (!url) { alert("没有取到播放地址"); return; }
+    closeSheet();
+    await fm.play(url, d.title, { format:"hls", headers: Object.assign({"User-Agent":UA}, d.headers||{}) });
+  }catch(e){ alert("播放失败：" + e.message); }
+}
+
+function closeSheet(){ $("modal").classList.remove("on"); }
+
+window.addEventListener("scroll", ()=>{
+  if (window.innerHeight + window.scrollY > document.body.offsetHeight - 600) nextPage();
+});
+
+renderChips();
+pick(0);
+</script>
+</body>
+</html>
